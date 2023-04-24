@@ -1,9 +1,10 @@
 from flask import Flask, render_template, request
 from flask import url_for, redirect, flash
+from flask_sqlalchemy import SQLAlchemy # 导入扩展类
+from werkzeug.security import generate_password_hash, check_password_hash
+import click
 import os
 import sys
-from flask_sqlalchemy import SQLAlchemy # 导入扩展类
-import click
 
 
 WIN = sys.platform.startswith('win')
@@ -22,9 +23,21 @@ db = SQLAlchemy(app)
 
 
 # 模型类
-class User(db.Model): # 表名将会是 user（ 自动生成， 小写处理）
+class User(db.Model): # 表名将会是 user（按小写处理，自动生成）
     id = db.Column(db.Integer, primary_key=True) # 主键
     name = db.Column(db.String(20)) # 名字
+    username = db.Column(db.String(20)) # 用户名
+    password_hash = db.Column(db.String(128)) # 密码散列值
+
+    def set_password(self, password):
+        '''用来设置密码的方法， 接受密码作为参数
+        将生成的密码散列值保持到对应字段'''
+        self.password_hash = generate_password_hash(password) 
+    
+    def validate_password(self, password):
+        '''用于验证密码的方法， 接受密码作为参数
+        返回布尔值'''
+        return check_password_hash(self.password_hash, password)
 
 
 class Movie(db.Model): # 表名将会是 movie
@@ -73,8 +86,30 @@ def forge():
     click.echo('Done.')
 
 
+# 创建管理员账户的命令
+@app.cli.command()
+@click.option('--username', prompt=True, help='The username usedto login.')
+@click.option('--password', prompt=True, hide_input=True, 
+              confirmation_prompt=True, help='The password used to login.')
+def admin(username, password):
+    """Create user."""
+    db.create_all()
+    user = User.query.first()
+    if user is not None:
+        click.echo('Updating user...')
+        user.username = username
+        user.set_password(password) # 设置密码
+    else:
+        click.echo('Creating user...')
+        user = User(name='Admin', username=username)
+        user.set_password(password) # 设置密码
+        db.session.add(user)
+    db.session.commit() # 提交数据库会话
+    click.echo('Done.')
+
+
 # 注册一个模板上下文处理函数
-# 这个函数返回的变量（ 以字典键值对的形式） 将会统一注入到每一个模板的上下文环境中， 
+# 这个函数返回的变量（以字典键值对的形式）将会统一注入到每一个模板的上下文环境中， 
 # 因此可以直接在模板中使用
 @app.context_processor
 def inject_user():
@@ -104,7 +139,6 @@ def index():
     movies = Movie.query.all() # 读取所有电影记录
     return render_template('index.html', movies=movies)
     # return render_template('index.html', name=name, movies=movies)
-
 
 
 @app.route('/movie/edit/<int:movie_id>', methods=['GET', 'POST'])
